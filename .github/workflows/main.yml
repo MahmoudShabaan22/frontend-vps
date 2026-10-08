@@ -145,4 +145,3 @@ jobs:
       - name: Cleanup unused Docker images
         run: |
           docker image prune -f
-```
