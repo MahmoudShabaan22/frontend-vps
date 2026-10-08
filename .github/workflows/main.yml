@@ -1,0 +1,147 @@
+```yaml
+name: Build and Deploy Frontend
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+
+  build-and-push:
+    name: Build & Push Frontend Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make image name repository-safe
+        run: |
+          IMAGE_NAME="${{ github.repository }}"
+          IMAGE_NAME=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+
+          echo "IMAGE_NAME=ghcr.io/$IMAGE_NAME:latest" >> "$GITHUB_ENV"
+
+          echo "Docker image:"
+          echo "ghcr.io/$IMAGE_NAME:latest"
+
+      - name: Check project files
+        run: |
+          echo "Current directory:"
+          pwd
+
+          echo "Repository files:"
+          ls -la
+
+          echo "Frontend directory:"
+          ls -la frontend
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t "$IMAGE_NAME" \
+            ./frontend
+
+      - name: Push Docker image
+        run: |
+          docker push "$IMAGE_NAME"
+
+
+  deploy:
+    name: Deploy Frontend
+
+    needs: build-and-push
+
+    runs-on: self-hosted
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+
+      - name: Check Docker
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Check deployment directory
+        working-directory: /opt/myapp
+        run: |
+          pwd
+          ls -la
+
+      - name: Pull latest Frontend image
+        working-directory: /opt/myapp
+        run: |
+          docker compose pull frontend
+
+      - name: Recreate Frontend container
+        working-directory: /opt/myapp
+        run: |
+          docker compose up -d --force-recreate frontend
+
+      - name: Check Frontend container
+        working-directory: /opt/myapp
+        run: |
+          docker compose ps frontend
+
+      - name: Wait for Frontend
+        run: |
+          echo "Waiting for frontend to become ready..."
+
+          for i in {1..10}; do
+
+            echo "Health check attempt $i/10"
+
+            if curl -fsS http://127.0.0.1:8081/; then
+              echo ""
+              echo "Frontend is ready!"
+              exit 0
+            fi
+
+            echo "Frontend is not ready yet."
+
+            sleep 3
+
+          done
+
+          echo "Frontend failed to become ready."
+
+          echo "========== Frontend Container Status =========="
+
+          docker ps -a --filter "name=myapp-frontend"
+
+          echo "========== Frontend Logs =========="
+
+          docker logs --tail 100 myapp-frontend
+
+          exit 1
+
+      - name: Final Frontend Status
+        working-directory: /opt/myapp
+        run: |
+          docker compose ps frontend
+
+      - name: Cleanup unused Docker images
+        run: |
+          docker image prune -f
+```
